@@ -8,7 +8,7 @@ class ConcurrencySettings {
     static final MapImplementation MAP_IMPLEMENTATION = null;  // null to loop through all
 
     // scenario
-    static final int MAP_SIZE = 200_000;
+    static final int MAP_SIZE = 100_000;
     static final float MAP_LOAD_FACTOR = 0.5f;
     static final int NUM_THREADS = 4;
     static final boolean MULTIPLE_WRITERS = false;
