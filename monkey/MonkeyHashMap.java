@@ -72,9 +72,6 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
     private int arrayLength;
     private int bitMaskForSmartMod;
 
-    private MonkeyHashMapEntry<K,V> firstEntry;
-    private MonkeyHashMapEntry<K,V> lastEntry;
-
     private int maxHashes;
     private int hashesInUse;
     private int[] entryCountByNumberOfHashesUsed;
@@ -106,8 +103,6 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
         this.arrayLength = getNextPowerOfTwo(1 + (int) Math.ceil(maxCapacity / loadFactor));
         this.bitMaskForSmartMod = this.arrayLength - 1;
         this.entries = (MonkeyHashMapEntry[]) new MonkeyHashMapEntry[this.arrayLength];
-        this.firstEntry = null;
-        this.lastEntry = null;
         this.maxHashes = maxHashes;
         this.size = 0;
         this.hashesInUse = 0;
@@ -134,7 +129,7 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
     @Override
     public boolean containsValue(Object value) {
         for (MonkeyHashMapEntry<K,V> entry : entries) {
-            if (entry != null && Objects.equals(entry.getValue(), value)) {
+            if (entry != null && Objects.equals(entry.value, value)) {
                 return true;
             }
         }
@@ -147,7 +142,7 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
         if (entry == null) {
             return null;
         }
-        V value = entry.getValue();
+        V value = entry.value;
         if (!validateMapping(key, value)) {
             return null;
         }
@@ -169,7 +164,7 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
             throw new IllegalArgumentException("Put operation failed for key " + key +
                     ". Exceeded number of attempts.");
         }
-        K newEntryKey = entry.getKey();
+        K newEntryKey = entry.key;
         if (newEntryKey == null) {  // insert
             if (size == maxCapacity) {
                 throw new IllegalArgumentException(("Put operation failed for key " + key +
@@ -177,18 +172,9 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
             }
             ++size;
             entry.key = key;
-            entry.previous = this.lastEntry;
-            entry.next = null;
-            if (this.firstEntry == null) {
-                this.firstEntry = entry;
-            }
-            if (this.lastEntry != null) {
-                this.lastEntry.next = entry;
-            }
-            this.lastEntry = entry;
         }
-        V oldValue = entry.getValue();
-        entry.setValue(value);
+        V oldValue = entry.value;
+        entry.value = value;
         return oldValue;
     }
 
@@ -283,11 +269,11 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
         for (int hashNumber = 1; hashNumber <= maxHashesForLookup; hashNumber++) {
             int hash = (hashNumber == 1 ? Objects.hashCode(key) : Objects.hash(hashNumber, key)) & bitMaskForSmartMod;
             MonkeyHashMapEntry<K,V> entry = entries[hash];
-            if (entry != null && Objects.equals(entry.getKey(), key)) {
+            if (entry != null && Objects.equals(entry.key, key)) {
                 return entry;  // updates and successful reads should return from here
             }
             if (upsertIntended) {
-                if (firstAvailablePosition == null && (entry == null || entry.getKey() == null)) {
+                if (firstAvailablePosition == null && (entry == null || entry.key == null)) {
                     firstAvailablePosition = hash;
                     hashNumberUsedForFirstAvailablePosition = hashNumber;
                 }
@@ -321,21 +307,9 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
             // we're reusing map entries for performance sake
             entry.key = null;
             entry.numberOfHashesUsed = 0;
-            entry.setValue(null);
+            entry.value = null;
         } else {
             this.entries[entry.positionInArray] = null;
-        }
-        if (entry.previous != null) {
-            entry.previous.next = entry.next;
-        }
-        if (entry.next != null) {
-            entry.next.previous = entry.previous;
-        }
-        if (this.firstEntry == entry) {
-            this.firstEntry = entry.next;
-        }
-        if (this.lastEntry == entry) {
-            this.lastEntry = entry.previous;
         }
         size--;
     }
@@ -363,34 +337,11 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
     }
 
     private void createAbstractCollections() {
-        this.entrySet = new AbstractSet<Entry<K,V>>() {
-            @Override
-            public Iterator<Entry<K,V>> iterator() {
-                return new MonkeyHashMapIterator();
-            }
-
-            @Override
-            public int size() {
-                return MonkeyHashMap.this.size;
-            }
-        };
 
         this.keySet = new AbstractSet<K>() {
             @Override
             public Iterator<K> iterator() {
                 return new MonkeyHashMapKeyIterator();
-            }
-
-            @Override
-            public int size() {
-                return MonkeyHashMap.this.size;
-            }
-        };
-
-        this.valueCollection = new AbstractCollection<V>() {
-            @Override
-            public Iterator<V> iterator() {
-                return new MonkeyHashMapValueIterator();
             }
 
             @Override
@@ -405,18 +356,14 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
         V value;
         int numberOfHashesUsed;
         final Integer positionInArray;
-        MonkeyHashMapEntry<K,V> next;
-        MonkeyHashMapEntry<K,V> previous;
 
         MonkeyHashMapEntry(K key, V value, Integer positionInArray) {
             this.key = key;
             this.value = value;
             this.positionInArray = positionInArray;
-            this.next = null;
-            this.previous = null;
         }
 
-        @Override
+		 @Override
         public V getValue() {
             return value;
         }
@@ -434,115 +381,29 @@ public class MonkeyHashMap<K,V> implements Map<K,V> {
         }
     }
 
-    private class MonkeyHashMapIterator implements Iterator<Entry<K,V>> {
-        K nextKey;
-        V nextValue;
-        MonkeyHashMapEntry<K,V> nextEntry;
-        int countActualIterations;
-
-        MonkeyHashMapIterator() {
-            this.nextEntry = null;
-            this.countActualIterations = 0;
-            advanceAndCacheNext();
-        }
-
-        @Override
-        public boolean hasNext() {
-            return nextKey != null;
-        }
-
-        @Override
-        public Entry<K,V> next() {
-            if (!hasNext()) {
-                throw new NoSuchElementException("The iterator has reached the end of the collection.");
-            }
-            MonkeyHashMapEntry<K,V> entry = new MonkeyHashMapEntry<>(nextKey, nextValue, null);
-            advanceAndCacheNext();
-            return entry;
-        }
-
-        @Override
-        public void remove() {
-            if (!hasNext()) {
-                throw new IllegalStateException("There is nothing to remove at the current iterator position.");
-            }
-            MonkeyHashMap.this.removeEntry(nextEntry);
-            advanceAndCacheNext();
-        }
-
-        @Override
-        public void forEachRemaining(Consumer<? super Entry<K,V>> action) {
-            throw new UnsupportedOperationException();
-        }
-
-        void advanceAndCacheNext() {
-            K key;
-            V value;
-
-            do {
-                countActualIterations++;
-                if ((nextEntry = nextEntry == null ? MonkeyHashMap.this.firstEntry : nextEntry.next) != null &&
-                        (key = nextEntry.getKey()) != null) {
-                    value = nextEntry.getValue();
-                    if (MonkeyHashMap.this.validateMapping(key, value)) {
-                        nextKey = key;
-                        nextValue = value;
-                        return;
-                    }
-                }
-            } while (nextEntry != null);
-
-            // reached the end of the entries array without finding a (valid) mapping
-            nextKey = null;
-            nextValue = null;
-        }
-    }
-
     private class MonkeyHashMapKeyIterator implements Iterator<K> {
 
-        private MonkeyHashMapIterator entryIterator;
+        private int i;
+		private int arrayLength;
+		private MonkeyHashMapEntry<K,V>[] entries;
 
         private MonkeyHashMapKeyIterator() {
-            this.entryIterator = new MonkeyHashMapIterator();
+            this.i = 0;
+			this.arrayLength = MonkeyHashMap.this.arrayLength;
+			this.entries = MonkeyHashMap.this.entries;
         }
 
         @Override
         public boolean hasNext() {
-            return this.entryIterator.hasNext();
+            return i < arrayLength;
         }
 
         @Override
         public K next() {
-            if (!hasNext()) {
-                throw new NoSuchElementException("The iterator has reached the end of the collection.");
-            }
-            K key = this.entryIterator.nextKey;
-            this.entryIterator.advanceAndCacheNext();
-            return key;
-        }
-    }
-
-    private class MonkeyHashMapValueIterator implements Iterator<V> {
-
-        private MonkeyHashMapIterator entryIterator;
-
-        private MonkeyHashMapValueIterator() {
-            this.entryIterator = new MonkeyHashMapIterator();
-        }
-
-        @Override
-        public boolean hasNext() {
-            return this.entryIterator.hasNext();
-        }
-
-        @Override
-        public V next() {
-            if (!hasNext()) {
-                throw new NoSuchElementException("The iterator has reached the end of the collection.");
-            }
-            V value = this.entryIterator.nextValue;
-            this.entryIterator.advanceAndCacheNext();
-            return value;
+            for(; i < arrayLength; i++)
+				if(entries[i] != null)
+					return entries[i++].key;
+			return null;
         }
     }
 
